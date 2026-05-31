@@ -26,36 +26,46 @@ export default function App() {
     originalUrl: '' 
   });
 
+  // Upload Intake Telemetry
+  const [uploadStats, setUploadStats] = useState({
+    isUploading: false,
+    current: 0,
+    total: 0,
+    percent: 0,
+    speed: 0
+  });
+
+  // PDF Compilation Telemetry
+  const [pdfStats, setPdfStats] = useState({
+    isGenerating: false,
+    current: 0,
+    total: 0,
+    percent: 0
+  });
+
   const dragCounter = useRef(0);
-  // THE FIX: We add a ref to track if the user is dragging an internal grid item
   const isInternalDragging = useRef(false);
 
   useEffect(() => {
     const handleDragEnter = (e) => { 
       e.preventDefault(); 
-      // THE FIX: Ignore the drag if it's an internal grid item
-      if (isInternalDragging.current) return; 
-      
+      if (isInternalDragging.current || uploadStats.isUploading || pdfStats.isGenerating) return; 
       dragCounter.current++; 
       if (e.dataTransfer.items && e.dataTransfer.items.length > 0) setIsDragging(true); 
     };
     
     const handleDragLeave = (e) => { 
       e.preventDefault(); 
-      if (isInternalDragging.current) return; 
-      
+      if (isInternalDragging.current || uploadStats.isUploading || pdfStats.isGenerating) return; 
       dragCounter.current--; 
       if (dragCounter.current === 0) setIsDragging(false); 
     };
     
-    const handleDragOver = (e) => {
-      e.preventDefault();
-    };
+    const handleDragOver = (e) => e.preventDefault();
     
     const handleDrop = (e) => {
       e.preventDefault(); 
-      if (isInternalDragging.current) return; 
-      
+      if (isInternalDragging.current || uploadStats.isUploading || pdfStats.isGenerating) return; 
       setIsDragging(false); 
       dragCounter.current = 0;
       if (e.dataTransfer && e.dataTransfer.files.length > 0) { 
@@ -75,7 +85,7 @@ export default function App() {
       window.removeEventListener('dragover', handleDragOver);
       window.removeEventListener('drop', handleDrop);
     };
-  }, [images]);
+  }, [uploadStats.isUploading, pdfStats.isGenerating]); 
 
   useEffect(() => {
     if (images.length === 0) {
@@ -152,12 +162,36 @@ export default function App() {
       validFiles = validFiles.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true, sensitivity: 'base' }));
     }
 
+    setUploadStats({ isUploading: true, current: 0, total: validFiles.length, percent: 0, speed: 0 });
+    
     const processedBatch = [];
-    for (const file of validFiles) {
+    const startTime = Date.now();
+
+    for (let i = 0; i < validFiles.length; i++) {
+      const file = validFiles[i];
       const thumbUrl = await generateThumbnail(file);
       processedBatch.push({ id: Math.random().toString(36).substring(7), file, previewUrl: thumbUrl });
+
+      const elapsedSeconds = (Date.now() - startTime) / 1000;
+      const currentSpeed = elapsedSeconds > 0.1 ? Math.round((i + 1) / elapsedSeconds) : 0;
+      const currentPercent = Math.round(((i + 1) / validFiles.length) * 100);
+
+      setUploadStats({
+        isUploading: true,
+        current: i + 1,
+        total: validFiles.length,
+        percent: currentPercent,
+        speed: currentSpeed
+      });
+
+      if (i % 3 === 0) await new Promise(r => setTimeout(r, 0));
     }
+
     setImages(prev => [...prev, ...processedBatch]);
+    
+    setTimeout(() => {
+      setUploadStats({ isUploading: false, current: 0, total: 0, percent: 0, speed: 0 });
+    }, 400);
   };
 
   const generateThumbnail = (file) => {
@@ -220,13 +254,16 @@ export default function App() {
   const generatePDF = async () => {
     if (images.length === 0) return;
     setIsProcessing(true);
+    setPdfStats({ isGenerating: true, current: 0, total: images.length, percent: 0 });
+
     try {
       const doc = new jsPDF({ orientation, unit: 'mm', format: pageSize === 'fit' ? 'a4' : pageSize });
       const maxPdfDimensionMm = 297;
       const computedMargin = parseFloat(margin);
 
       for (let i = 0; i < images.length; i++) {
-        await new Promise(r => setTimeout(r, 12));
+        await new Promise(r => setTimeout(r, 12)); 
+        
         const maxResolutionLimit = quality <= 0.3 ? 1000 : quality <= 0.6 ? 1600 : 2400;
         const { compressedUrl, width, height } = await processImageFile(images[i].file, parseFloat(quality), maxResolutionLimit);
         
@@ -263,17 +300,126 @@ export default function App() {
           doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(110, 120, 135);
           doc.text(`${i + 1} / ${images.length}`, doc.internal.pageSize.getWidth() / 2, doc.internal.pageSize.getHeight() - 8, { align: 'center' });
         }
+
+        setPdfStats({
+          isGenerating: true,
+          current: i + 1,
+          total: images.length,
+          percent: Math.round(((i + 1) / images.length) * 100)
+        });
       }
 
       const firstImgName = images[0]?.file.name || 'document';
       const baseDocumentName = firstImgName.split('.').slice(0, -1).join('.') || firstImgName;
       doc.save(`${baseDocumentName}-ImageToPDFNow.pdf`);
-    } catch (e) { console.error(e); } finally { setIsProcessing(false); }
+      
+    } catch (e) { 
+      console.error(e); 
+    } finally { 
+      setTimeout(() => {
+        setIsProcessing(false); 
+        setPdfStats({ isGenerating: false, current: 0, total: 0, percent: 0 });
+      }, 500);
+    }
   };
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-800 font-sans antialiased relative overflow-x-hidden flex flex-col">
       
+      {/* FULL-SCREEN PDF GENERATION TELEMETRY OVERLAY */}
+      {pdfStats.isGenerating && (
+        <div className="fixed inset-0 bg-slate-900/95 z-[1000] backdrop-blur-xl flex flex-col items-center justify-center text-white px-6 transition-opacity duration-300">
+          <div className="w-full max-w-lg bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl flex flex-col items-center">
+            
+            <div className="bg-emerald-500/20 text-emerald-400 p-5 rounded-full mb-6 relative">
+              <div className="absolute inset-0 bg-emerald-500/20 rounded-full animate-ping"></div>
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="relative z-10">
+                <path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="12" y1="18" x2="12" y2="12" />
+                <line x1="9" y1="15" x2="15" y2="15" />
+              </svg>
+            </div>
+            
+            <h2 className="text-2xl font-black tracking-tight mb-3 text-center text-white">Compiling Document Layout</h2>
+            
+            <div className="w-full bg-slate-900 h-3.5 rounded-full overflow-hidden mb-6 relative shadow-inner border border-slate-700">
+              <div 
+                className="h-full bg-gradient-to-r from-emerald-600 to-emerald-400 transition-all duration-300 ease-out"
+                style={{ width: `${pdfStats.percent}%` }}
+              />
+            </div>
+
+            <div className="w-full grid grid-cols-2 gap-3 text-center mb-6">
+              <div className="bg-slate-700/50 rounded-xl p-3 border border-slate-600">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Matrix Progress</div>
+                <div className="text-sm font-black text-white">{pdfStats.percent}%</div>
+              </div>
+              <div className="bg-slate-700/50 rounded-xl p-3 border border-slate-600">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Sheets Rendered</div>
+                <div className="text-sm font-black text-white">{pdfStats.current} / {pdfStats.total}</div>
+              </div>
+            </div>
+
+            {/* SECURITY TRUST BADGE */}
+            <div className="flex items-center justify-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2.5 rounded-xl w-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span className="text-[11px] font-bold tracking-wide uppercase">Processed 100% locally. Zero cloud uploads.</span>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* FULL-SCREEN DATA PROCESSING TELEMETRY OVERLAY (UPLOAD PHASE) */}
+      {uploadStats.isUploading && (
+        <div className="fixed inset-0 bg-slate-900/95 z-[1000] backdrop-blur-xl flex flex-col items-center justify-center text-white px-6 transition-opacity duration-300">
+          <div className="w-full max-w-lg bg-slate-800 p-8 rounded-3xl border border-slate-700 shadow-2xl flex flex-col items-center">
+            
+            <div className="bg-teal-500/20 text-teal-400 p-5 rounded-full mb-6 relative">
+              <div className="absolute inset-0 bg-teal-500/20 rounded-full animate-ping"></div>
+              <svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="relative z-10">
+                <polyline points="16 16 12 12 8 16"/>
+                <line x1="12" y1="12" x2="12" y2="21"/>
+                <path d="M20.39 18.39A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.3"/>
+                <polyline points="16 16 12 12 8 16"/>
+              </svg>
+            </div>
+            
+            <h2 className="text-2xl font-black tracking-tight mb-4 text-center text-white">Ingesting Image Data</h2>
+            
+            <div className="w-full bg-slate-900 h-3.5 rounded-full overflow-hidden mb-6 relative shadow-inner border border-slate-700">
+              <div 
+                className="h-full bg-gradient-to-r from-teal-500 to-emerald-400 transition-all duration-300 ease-out"
+                style={{ width: `${uploadStats.percent}%` }}
+              />
+            </div>
+
+            <div className="w-full grid grid-cols-3 gap-3 text-center mb-6">
+              <div className="bg-slate-700/50 rounded-xl p-3 border border-slate-600">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Status</div>
+                <div className="text-sm font-black text-white">{uploadStats.percent}%</div>
+              </div>
+              <div className="bg-slate-700/50 rounded-xl p-3 border border-slate-600">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Items Processed</div>
+                <div className="text-sm font-black text-white">{uploadStats.current} / {uploadStats.total}</div>
+              </div>
+              <div className="bg-slate-700/50 rounded-xl p-3 border border-slate-600">
+                <div className="text-[10px] text-slate-400 font-bold uppercase tracking-wider mb-1">Local Speed</div>
+                <div className="text-sm font-black text-teal-400">{uploadStats.speed} <span className="text-[10px] text-teal-500/70">/ sec</span></div>
+              </div>
+            </div>
+
+            {/* SECURITY TRUST BADGE */}
+            <div className="flex items-center justify-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 px-4 py-2.5 rounded-xl w-full">
+              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              <span className="text-[11px] font-bold tracking-wide uppercase">Processed 100% locally. Zero cloud uploads.</span>
+            </div>
+
+          </div>
+        </div>
+      )}
+
       {/* BRANDED DRAG-OVER RECEPTACLE OVERLAY */}
       {isDragging && (
         <div className="fixed inset-0 bg-gradient-to-br from-teal-700/95 to-emerald-800/95 z-[999] backdrop-blur-md flex flex-col items-center justify-center text-white pointer-events-none transition-all duration-200">
@@ -290,7 +436,6 @@ export default function App() {
           <img src="/logo.png" alt="ImageToPDFNow Brand Logo" className="w-10 h-10 object-contain drop-shadow-sm" />
           <span className="text-xl font-black text-slate-900 tracking-tight">ImageToPDFNow</span>
         </div>
-        <h1 className="hidden lg:block text-xs text-slate-400 font-medium">Professional Client-Side Layout Desk</h1>
       </header>
 
       <main className="max-w-7xl mx-auto p-6 grid grid-cols-1 lg:grid-cols-12 gap-6 items-start flex-grow w-full">
@@ -331,22 +476,22 @@ export default function App() {
                 </div>
               </div>
 
-              {/* THE FIX IS APPLIED TO THIS GRID LAYER */}
+              {/* TACTILE SEQUENCING GRID */}
               <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-4">
                 {images.map((img, index) => (
                   <div 
                     key={img.id} 
                     draggable 
                     onDragStart={(e) => {
-                      isInternalDragging.current = true; // Block global window interceptor
+                      isInternalDragging.current = true;
                       e.dataTransfer.setData("text/plain", index);
                     }} 
                     onDragEnd={() => {
-                      isInternalDragging.current = false; // Reset interceptor
+                      isInternalDragging.current = false;
                     }}
                     onDragOver={(e) => e.preventDefault()} 
                     onDrop={(e) => {
-                      e.stopPropagation(); // Stop event from hitting the window object
+                      e.stopPropagation();
                       handleDropSort(parseInt(e.dataTransfer.getData("text/plain"), 10), index);
                     }} 
                     className="group relative cursor-grab active:cursor-grabbing bg-slate-50 rounded-2xl aspect-square overflow-hidden border-2 border-slate-100 hover:border-teal-400 shadow-sm transition-all duration-150"
