@@ -1,4 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
+import brandLogo from './assets/logo.png';
 import { jsPDF } from 'jspdf';
 
 export default function App() {
@@ -433,7 +434,7 @@ export default function App() {
       {/* CUSTOM LOGO HEADER */}
       <header className="bg-white border-b border-slate-100 py-4 px-8 flex justify-between items-center sticky top-0 z-50 shadow-xs">
         <div className="flex items-center gap-3">
-          <img src="/logo.png" alt="ImageToPDFNow Brand Logo" className="w-10 h-10 object-contain drop-shadow-sm" />
+          <img src={brandLogo} alt="ImageToPDFNow Brand Logo" className="w-10 h-10 object-contain drop-shadow-sm" />
           <span className="text-xl font-black text-slate-900 tracking-tight">ImageToPDFNow</span>
         </div>
       </header>
